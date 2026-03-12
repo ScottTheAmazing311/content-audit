@@ -260,14 +260,18 @@ function parsePage(html: string, url: string, baseDomain: string): ParsedPage {
   // Viewport
   const hasViewport = !!$('meta[name="viewport"][content*="width"]').attr('content');
 
-  // Blog post detection
+  // Blog post detection — match any path containing blog/news/article keywords with a sub-path
   const urlLower = url.toLowerCase();
-  const isBlogPost = /\/(blog|news|article|insight|post|resource)s?\//i.test(urlLower) &&
-    !/\/(blog|news|article|insight|post|resource)s?\/?$/i.test(urlLower); // Not the index
+  const blogIndexPattern = /\/([a-z-]*(?:blog|news|article|insight|post|resource)s?)\/?$/i;
+  const blogContainerPattern = /\/([a-z-]*(?:blog|news|article|insight|post|resource)s?)\//i;
+  const isBlogPost = blogContainerPattern.test(urlLower) && !blogIndexPattern.test(urlLower);
 
-  // Practice area page detection
+  // Practice area page detection — broadened to catch state/city prefix patterns
   const isPracticeAreaPage = /\/(practice[_-]?area|service|area-of-practice|specialt)/i.test(urlLower) ||
-    /\/(personal[_-]?injury|car[_-]?accident|truck[_-]?accident|wrongful[_-]?death|medical[_-]?malpractice|workers[_-]?comp|slip[_-]?and[_-]?fall|dog[_-]?bite|brain[_-]?injury|birth[_-]?injury|nursing[_-]?home|spinal[_-]?cord|motorcycle|pedestrian|bicycle|construction[_-]?accident|product[_-]?liability|mass[_-]?tort|class[_-]?action|catastrophic)/i.test(urlLower);
+    /\/(personal[_-]?injury|car[_-]?accident|truck[_-]?accident|wrongful[_-]?death|medical[_-]?malpractice|workers[_-]?comp|slip[_-]?and[_-]?fall|dog[_-]?bite|brain[_-]?injury|birth[_-]?injury|nursing[_-]?home|spinal[_-]?cord|motorcycle|pedestrian|bicycle|construction[_-]?accident|product[_-]?liability|mass[_-]?tort|class[_-]?action|catastrophic)/i.test(urlLower) ||
+    // Match state/city prefixed practice area URLs like /utah-car-accident-attorneys/
+    /\/[a-z]+-(?:car|truck|motorcycle|bicycle|pedestrian|bus|uber|lyft|rideshare|boat|aviation|drunk[_-]?driving|distracted[_-]?driving|hit[_-]?and[_-]?run|company[_-]?vehicle|government[_-]?vehicle|uninsured)[_-]?(?:accident|crash|collision|injury)[_-]?(?:lawyer|attorney|law)/i.test(urlLower) ||
+    /\/[a-z]+-(?:personal[_-]?injury|wrongful[_-]?death|medical[_-]?malpractice|birth[_-]?injury|brain[_-]?injury|spinal[_-]?cord|dog[_-]?bite|slip[_-]?and[_-]?fall|catastrophic[_-]?injury|nursing[_-]?home|premises[_-]?liability|workers[_-]?comp)[_-]?(?:lawyer|attorney|law)/i.test(urlLower);
 
   // Dates
   let publishDate: Date | null = null;
@@ -372,6 +376,9 @@ function discoverSubpages(homepage: ParsedPage, baseUrl: string, baseDomain: str
     'faq', 'case-result', 'result', 'testimonial', 'review',
     'personal-injury', 'car-accident', 'truck-accident', 'wrongful-death',
     'medical-malpractice', 'workers-comp', 'podcast', 'video',
+    'injury', 'accident', 'liability', 'negligence', 'malpractice',
+    'criminal', 'defense', 'family-law', 'divorce', 'custody',
+    'estate', 'bankruptcy', 'immigration', 'employment', 'discrimination',
   ];
 
   for (const link of homepage.allLinks) {
@@ -390,8 +397,8 @@ function discoverSubpages(homepage: ParsedPage, baseUrl: string, baseDomain: str
       for (const k of keywords) {
         if (pathAndText.includes(k)) priority++;
       }
-      // Boost blog posts heavily
-      if (/\/(blog|news|article|insight|post|resource)s?\//i.test(linkUrl.pathname)) priority += 5;
+      // Boost blog posts heavily — match compound blog slugs like /personal-injury-blog/
+      if (/\/([a-z-]*(?:blog|news|article|insight|post|resource)s?)\//i.test(linkUrl.pathname)) priority += 5;
       if (priority > 0) candidates.push({ url: normalized, priority });
     } catch { /* skip */ }
   }
@@ -399,6 +406,8 @@ function discoverSubpages(homepage: ParsedPage, baseUrl: string, baseDomain: str
   // Fallback paths
   const fallbackPaths = [
     '/blog', '/blog/', '/news', '/articles', '/insights', '/resources',
+    '/personal-injury-blog', '/injury-blog', '/legal-blog', '/law-blog',
+    '/in-the-news', '/media', '/publications', '/updates',
     '/practice-areas', '/services', '/about', '/about-us',
     '/attorneys', '/team', '/faq', '/results', '/case-results',
   ];
@@ -427,8 +436,8 @@ function discoverBlogPosts(blogIndexPages: ParsedPage[], baseDomain: string): st
         const linkUrl = new URL(link.href);
         if (linkUrl.hostname.replace(/^www\./, '') !== baseDomain) continue;
         const path = linkUrl.pathname.toLowerCase();
-        // Is it a blog post (under /blog/ but not the index itself)?
-        if (/\/(blog|news|article|insight|post|resource)s?\/.+/i.test(path)) {
+        // Is it a blog post (under a blog-like section but not the index itself)?
+        if (/\/([a-z-]*(?:blog|news|article|insight|post|resource)s?)\/.+/i.test(path)) {
           const normalized = linkUrl.origin + linkUrl.pathname.replace(/\/$/, '');
           if (!seen.has(normalized)) {
             seen.add(normalized);
@@ -1259,7 +1268,7 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
 
   // Discover and fetch blog posts from blog index pages
   const blogIndexPages = allPages.filter(p =>
-    /\/(blog|news|article|insight|resource)s?\/?$/i.test(p.url)
+    /\/([a-z-]*(?:blog|news|article|insight|resource)s?)\/?$/i.test(p.url)
   );
   if (blogIndexPages.length > 0) {
     const postUrls = discoverBlogPosts(blogIndexPages, domain)
