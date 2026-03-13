@@ -58,9 +58,9 @@ const DEFAULT_EXCLUDE_PATTERNS = [
 
 const DEFAULT_REJECT_RESOURCES = ['image', 'media', 'font', 'stylesheet'];
 
-const POLL_START_INTERVAL = 5000;   // 5s
-const POLL_MAX_INTERVAL = 30000;    // 30s
-const POLL_TIMEOUT = 600000;        // 10 min
+const POLL_START_INTERVAL = 3000;   // 3s
+const POLL_MAX_INTERVAL = 10000;    // 10s
+const POLL_TIMEOUT = 55000;         // 55s — must fit within Vercel function timeout
 
 // ── In-memory cache (persists within a single serverless cold start) ─────────
 
@@ -145,16 +145,17 @@ async function pollCrawl(jobId: string): Promise<CrawlResult> {
 
   const startTime = Date.now();
   let interval = POLL_START_INTERVAL;
-  let allPages: CrawlPage[] = [];
+  let lastPages: CrawlPage[] = [];
+  let lastTotal = 0;
+  let lastFinished = 0;
+  let lastBrowserSeconds = 0;
 
   while (Date.now() - startTime < POLL_TIMEOUT) {
     await new Promise(resolve => setTimeout(resolve, interval));
 
     let cursor: number | undefined;
     let jobStatus = 'running';
-    let total = 0;
-    let finished = 0;
-    let browserSeconds = 0;
+    const pollPages: CrawlPage[] = [];
 
     // Paginate through all results
     do {
@@ -174,37 +175,46 @@ async function pollCrawl(jobId: string): Promise<CrawlResult> {
       const data = await res.json();
       const result = data.result;
       jobStatus = result.status;
-      total = result.total ?? 0;
-      finished = result.finished ?? 0;
-      browserSeconds = result.browserSecondsUsed ?? 0;
+      lastTotal = result.total ?? 0;
+      lastFinished = result.finished ?? 0;
+      lastBrowserSeconds = result.browserSecondsUsed ?? 0;
 
       if (result.records) {
-        allPages.push(...result.records);
+        pollPages.push(...result.records);
       }
 
       cursor = result.cursor ?? undefined;
     } while (cursor !== undefined);
 
+    // Keep the latest poll results
+    if (pollPages.length > 0) lastPages = pollPages;
+
     if (jobStatus && jobStatus !== 'running') {
       return {
         id: jobId,
         status: jobStatus as CrawlResult['status'],
-        total,
-        finished,
-        pages: allPages,
-        browserSecondsUsed: browserSeconds,
+        total: lastTotal,
+        finished: lastFinished,
+        pages: lastPages,
+        browserSecondsUsed: lastBrowserSeconds,
         errors: jobStatus === 'errored' ? ['Crawl job errored'] : [],
       };
     }
-
-    // Reset pages for next poll cycle (we'll get fresh results)
-    allPages = [];
 
     // Exponential backoff
     interval = Math.min(interval * 1.5, POLL_MAX_INTERVAL);
   }
 
-  throw new Error(`Crawl timed out after ${POLL_TIMEOUT / 1000}s`);
+  // Return partial results instead of throwing
+  return {
+    id: jobId,
+    status: 'completed' as CrawlResult['status'],
+    total: lastTotal,
+    finished: lastFinished,
+    pages: lastPages,
+    browserSecondsUsed: lastBrowserSeconds,
+    errors: [`Crawl timed out after ${POLL_TIMEOUT / 1000}s, returning ${lastPages.length} partial results`],
+  };
 }
 
 /**
