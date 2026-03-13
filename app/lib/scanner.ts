@@ -1224,7 +1224,10 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   // Parallel fetch: homepage + Cloudflare crawl
   const [homepageRes, crawlOutcome] = await Promise.all([
     fetchResource(url),
-    crawlSite({ url, limit: 75, maxDepth: 3, formats: ['html'], maxAge: 3600 }).catch((e) => {
+    Promise.race([
+      crawlSite({ url, limit: 30, maxDepth: 2, formats: ['html'], maxAge: 3600 }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 90000)),
+    ]).catch((e) => {
       errors.push(`Crawl error: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }),
