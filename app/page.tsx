@@ -158,7 +158,7 @@ export default function Home() {
           <div className="logo-mark"></div>
           <div className="logo-text">Content Audit</div>
         </div>
-        <div className="header-tag">Powered by Rankings.io</div>
+        <a href="https://lawfirmaudits.com" className="header-tag" style={{textDecoration:'none',color:'inherit'}}>LawFirmAudits.com</a>
       </header>
 
       {/* INPUT VIEW */}
