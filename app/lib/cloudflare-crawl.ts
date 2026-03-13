@@ -111,6 +111,7 @@ async function startCrawl(options: CrawlOptions): Promise<string | null> {
     rejectResourceTypes: options.rejectResourceTypes ?? DEFAULT_REJECT_RESOURCES,
     options: {
       excludePatterns: options.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS,
+      includeSubdomains: true, // Many sites use www/non-www links interchangeably
     },
   };
 
