@@ -1224,11 +1224,19 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   // Parallel fetch: homepage + Cloudflare crawl
   const [homepageRes, crawlOutcome] = await Promise.all([
     fetchResource(url),
-    crawlSite({ url, limit: 75, maxDepth: 3, formats: ['html'] }).catch(() => null),
+    crawlSite({ url, limit: 75, maxDepth: 3, formats: ['html'] }).catch((e) => {
+      errors.push(`Crawl error: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }),
   ]);
 
   const crawlResult: CrawlResult | null = crawlOutcome ?? null;
   let usedCrawl = false;
+  if (crawlResult) {
+    errors.push(`Crawl status: ${crawlResult.status}, total: ${crawlResult.total}, finished: ${crawlResult.finished}, pages: ${crawlResult.pages.length}`);
+  } else {
+    errors.push('Crawl returned null');
+  }
 
   let homepageContent = homepageRes.content;
   if ((!homepageContent || homepageRes.status !== 200) && crawlResult) {
@@ -1251,13 +1259,18 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   // Fetch subpages (up to 15 for content audit — need blog posts)
   if (homepage) {
     const subUrls = discoverSubpages(homepage, url, domain).slice(0, 15);
+    errors.push(`Discovered ${subUrls.length} subpage URLs: ${subUrls.slice(0, 5).join(', ')}`);
+    let subFetchSuccess = 0;
+    let subFetchFail = 0;
     const subResults = await Promise.allSettled(
       subUrls.map(async (subUrl) => {
         const res = await fetchResource(subUrl, 6000);
-        if (res.content && res.status === 200) return parsePage(res.content, subUrl, domain);
+        if (res.content && res.status === 200) { subFetchSuccess++; return parsePage(res.content, subUrl, domain); }
+        subFetchFail++;
         return null;
       })
     );
+    errors.push(`Subpage fetch: ${subFetchSuccess} ok, ${subFetchFail} failed`);
     for (const r of subResults) {
       if (r.status === 'fulfilled' && r.value) {
         allPages.push(r.value);
