@@ -1233,9 +1233,16 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   const crawlResult: CrawlResult | null = crawlOutcome ?? null;
   let usedCrawl = false;
 
+  // Debug info
+  if (crawlResult) {
+    const statusCounts: Record<string, number> = {};
+    for (const cp of crawlResult.pages) statusCounts[cp.status] = (statusCounts[cp.status] || 0) + 1;
+    errors.push(`Crawl: ${crawlResult.status}, ${crawlResult.pages.length} pages (${JSON.stringify(statusCounts)})`);
+  } else {
+    errors.push(`Crawl: null, homepage fetch status: ${homepageRes.status}, hasContent: ${!!homepageRes.content}`);
+  }
+
   // ── STEP 1: Build page collection, prioritizing crawl data ──
-  // Many law firm sites block server-side fetch (Cloudflare WAF), so
-  // the Cloudflare Browser Rendering crawl is often the ONLY data source.
   const allPages: ParsedPage[] = [];
   const seenUrls = new Set<string>();
 
@@ -1262,7 +1269,7 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
     try { const path = new URL(p.url).pathname; return path === '/' || path === ''; } catch { return false; }
   }) ?? null;
 
-  if (!homepage && homepageRes.content && homepageRes.status === 200) {
+  if (!homepage && homepageRes.content) {
     homepage = parsePage(homepageRes.content, url, domain);
     if (!seenUrls.has(url)) {
       allPages.unshift(homepage);
