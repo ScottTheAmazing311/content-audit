@@ -1224,7 +1224,7 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   // Parallel fetch: homepage + Cloudflare crawl
   const [homepageRes, crawlOutcome] = await Promise.all([
     fetchResource(url),
-    crawlSite({ url, limit: 75, maxDepth: 3, formats: ['html'] }).catch((e) => {
+    crawlSite({ url, limit: 75, maxDepth: 3, formats: ['html'], maxAge: 3600 }).catch((e) => {
       errors.push(`Crawl error: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }),
@@ -1232,103 +1232,107 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
 
   const crawlResult: CrawlResult | null = crawlOutcome ?? null;
   let usedCrawl = false;
-  if (crawlResult) {
-    errors.push(`Crawl status: ${crawlResult.status}, total: ${crawlResult.total}, finished: ${crawlResult.finished}, pages: ${crawlResult.pages.length}`);
-  } else {
-    errors.push('Crawl returned null');
-  }
 
-  let homepageContent = homepageRes.content;
-  if ((!homepageContent || homepageRes.status !== 200) && crawlResult) {
-    const crawlHome = crawlResult.pages.find(p => {
-      if (p.status !== 'completed' || !p.html) return false;
-      try { return new URL(p.url).pathname === '/' || new URL(p.url).pathname === ''; } catch { return false; }
-    });
-    if (crawlHome?.html) {
-      homepageContent = crawlHome.html;
-      usedCrawl = true;
+  // ── STEP 1: Build page collection, prioritizing crawl data ──
+  // Many law firm sites block server-side fetch (Cloudflare WAF), so
+  // the Cloudflare Browser Rendering crawl is often the ONLY data source.
+  const allPages: ParsedPage[] = [];
+  const seenUrls = new Set<string>();
+
+  // Process ALL crawl pages first (they use real browser rendering)
+  if (crawlResult) {
+    for (const crawlPage of crawlResult.pages) {
+      if (crawlPage.status !== 'completed' || !crawlPage.html) continue;
+      try {
+        const pageUrl = new URL(crawlPage.url);
+        if (pageUrl.hostname.replace(/^www\./, '') !== domain) continue;
+        const normalized = pageUrl.origin + pageUrl.pathname.replace(/\/$/, '');
+        if (seenUrls.has(normalized)) continue;
+        seenUrls.add(normalized);
+        seenUrls.add(crawlPage.url); // Also add original URL
+        const parsed = parsePage(crawlPage.html, crawlPage.url, domain);
+        allPages.push(parsed);
+        usedCrawl = true;
+      } catch {}
     }
   }
 
-  if (!homepageContent) errors.push('Could not fetch homepage');
+  // Get homepage — prefer crawl version, fall back to direct fetch
+  let homepage = allPages.find(p => {
+    try { const path = new URL(p.url).pathname; return path === '/' || path === ''; } catch { return false; }
+  }) ?? null;
 
-  const homepage = homepageContent ? parsePage(homepageContent, url, domain) : null;
-  const allPages: ParsedPage[] = homepage ? [homepage] : [];
-  const seenUrls = new Set<string>([url]);
-
-  // Fetch subpages (up to 15 for content audit — need blog posts)
-  if (homepage) {
-    const subUrls = discoverSubpages(homepage, url, domain).slice(0, 15);
-    errors.push(`Discovered ${subUrls.length} subpage URLs: ${subUrls.slice(0, 5).join(', ')}`);
-    let subFetchSuccess = 0;
-    let subFetchFail = 0;
-    const subResults = await Promise.allSettled(
-      subUrls.map(async (subUrl) => {
-        const res = await fetchResource(subUrl, 6000);
-        if (res.content && res.status === 200) { subFetchSuccess++; return parsePage(res.content, subUrl, domain); }
-        subFetchFail++;
-        return null;
-      })
-    );
-    errors.push(`Subpage fetch: ${subFetchSuccess} ok, ${subFetchFail} failed`);
-    for (const r of subResults) {
-      if (r.status === 'fulfilled' && r.value) {
-        allPages.push(r.value);
-        seenUrls.add(r.value.url);
+  if (!homepage && homepageRes.content && homepageRes.status === 200) {
+    homepage = parsePage(homepageRes.content, url, domain);
+    if (!seenUrls.has(url)) {
+      allPages.unshift(homepage);
+      seenUrls.add(url);
+    }
+  } else if (!homepage && crawlResult) {
+    // Try crawl homepage with trailing slash variations
+    const crawlHome = crawlResult.pages.find(p => {
+      if (p.status !== 'completed' || !p.html) return false;
+      try { const path = new URL(p.url).pathname; return path === '/' || path === ''; } catch { return false; }
+    });
+    if (crawlHome?.html) {
+      homepage = parsePage(crawlHome.html, url, domain);
+      if (!seenUrls.has(url)) {
+        allPages.unshift(homepage);
+        seenUrls.add(url);
       }
     }
   }
 
-  // Discover and fetch blog posts from blog index pages
+  if (!homepage) errors.push('Could not fetch homepage');
+
+  // ── STEP 2: If crawl had few pages, supplement with direct fetches ──
+  if (homepage && allPages.length < 10) {
+    const subUrls = discoverSubpages(homepage, url, domain)
+      .filter(u => !seenUrls.has(u) && !seenUrls.has(u.replace(/\/$/, '')))
+      .slice(0, 15);
+    if (subUrls.length > 0) {
+      const subResults = await Promise.allSettled(
+        subUrls.map(async (subUrl) => {
+          const res = await fetchResource(subUrl, 6000);
+          if (res.content && res.status === 200) return parsePage(res.content, subUrl, domain);
+          return null;
+        })
+      );
+      for (const r of subResults) {
+        if (r.status === 'fulfilled' && r.value) {
+          const normalized = new URL(r.value.url).origin + new URL(r.value.url).pathname.replace(/\/$/, '');
+          if (!seenUrls.has(normalized)) {
+            allPages.push(r.value);
+            seenUrls.add(normalized);
+            seenUrls.add(r.value.url);
+          }
+        }
+      }
+    }
+  }
+
+  // ── STEP 3: Discover and fetch blog posts from blog index pages ──
   const blogIndexPages = allPages.filter(p =>
     /\/([a-z-]*(?:blog|news|article|insight|resource)s?)\/?$/i.test(p.url)
   );
   if (blogIndexPages.length > 0) {
     const postUrls = discoverBlogPosts(blogIndexPages, domain)
-      .filter(u => !seenUrls.has(u))
+      .filter(u => !seenUrls.has(u) && !seenUrls.has(u.replace(/\/$/, '')))
       .slice(0, 10);
-    const postResults = await Promise.allSettled(
-      postUrls.map(async (postUrl) => {
-        const res = await fetchResource(postUrl, 6000);
-        if (res.content && res.status === 200) return parsePage(res.content, postUrl, domain);
-        return null;
-      })
-    );
-    for (const r of postResults) {
-      if (r.status === 'fulfilled' && r.value) {
-        allPages.push(r.value);
-        seenUrls.add(r.value.url);
+    if (postUrls.length > 0) {
+      const postResults = await Promise.allSettled(
+        postUrls.map(async (postUrl) => {
+          const res = await fetchResource(postUrl, 6000);
+          if (res.content && res.status === 200) return parsePage(res.content, postUrl, domain);
+          return null;
+        })
+      );
+      for (const r of postResults) {
+        if (r.status === 'fulfilled' && r.value) {
+          allPages.push(r.value);
+          seenUrls.add(r.value.url);
+        }
       }
-    }
-  }
-
-  // Merge crawl pages
-  if (crawlResult) {
-    const statusCounts: Record<string, number> = {};
-    let withHtml = 0;
-    for (const cp of crawlResult.pages) {
-      statusCounts[cp.status] = (statusCounts[cp.status] || 0) + 1;
-      if (cp.html) withHtml++;
-    }
-    errors.push(`Crawl page statuses: ${JSON.stringify(statusCounts)}, withHtml: ${withHtml}`);
-    errors.push(`Crawl page URLs (first 5): ${crawlResult.pages.slice(0, 5).map(p => `${p.url} [${p.status}]`).join(', ')}`);
-    for (const crawlPage of crawlResult.pages) {
-      if (crawlPage.status !== 'completed' || !crawlPage.html) continue;
-      if (seenUrls.has(crawlPage.url)) continue;
-      try {
-        const pageUrl = new URL(crawlPage.url);
-        if (pageUrl.hostname.replace(/^www\./, '') !== domain) continue;
-        const path = pageUrl.pathname.toLowerCase();
-        // Match keywords anywhere in path (not just after /) to catch compound slugs
-        // like /personal-injury-blog/ or /utah-car-accident-attorneys/
-        const isRelevant = /(blog|news|article|insight|post|resource|practice|service|attorney|lawyer|about|team|faq|result|testimonial|guide|video|podcast|injury|accident|malpractice|wrongful|death|slip|fall|dog|bite|truck|motorcycle|bicycle|pedestrian|workers|comp|birth|brain|spinal|nursing|premises|liability|catastrophic)/.test(path);
-        if (!isRelevant && allPages.length >= 20) continue;
-        const parsed = parsePage(crawlPage.html, crawlPage.url, domain);
-        allPages.push(parsed);
-        seenUrls.add(crawlPage.url);
-        usedCrawl = true;
-        if (allPages.length >= 30) break; // Cap at 30 total pages
-      } catch {}
     }
   }
 
