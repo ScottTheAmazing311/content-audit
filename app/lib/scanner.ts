@@ -1304,6 +1304,14 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
 
   // Merge crawl pages
   if (crawlResult) {
+    const statusCounts: Record<string, number> = {};
+    let withHtml = 0;
+    for (const cp of crawlResult.pages) {
+      statusCounts[cp.status] = (statusCounts[cp.status] || 0) + 1;
+      if (cp.html) withHtml++;
+    }
+    errors.push(`Crawl page statuses: ${JSON.stringify(statusCounts)}, withHtml: ${withHtml}`);
+    errors.push(`Crawl page URLs (first 5): ${crawlResult.pages.slice(0, 5).map(p => `${p.url} [${p.status}]`).join(', ')}`);
     for (const crawlPage of crawlResult.pages) {
       if (crawlPage.status !== 'completed' || !crawlPage.html) continue;
       if (seenUrls.has(crawlPage.url)) continue;
