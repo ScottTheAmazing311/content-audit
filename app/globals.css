@@ -1157,3 +1157,49 @@ header {
   background: var(--border);
   margin: 0 0 72px 0;
 }
+
+/* SHARE BUTTON */
+.share-btn-wrap {
+  text-align: center;
+  margin: 24px 0 48px;
+}
+.share-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: -0.01em;
+}
+.share-btn:hover {
+  border-color: var(--text-tertiary);
+  background: var(--surface-2, rgba(255,255,255,0.06));
+}
+
+/* SHARED BANNER */
+.shared-banner {
+  text-align: center;
+  padding: 14px 24px;
+  margin: 0 0 48px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.shared-banner a {
+  color: var(--accent, var(--blue));
+  text-decoration: none;
+  font-weight: 600;
+}
+.shared-banner a:hover {
+  text-decoration: underline;
+}

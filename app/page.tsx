@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { encodeResults } from './lib/share';
 
 // ═══════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════
-interface CheckResult {
+export interface CheckResult {
   name: string;
   category: string;
   passed: boolean;
@@ -15,7 +16,7 @@ interface CheckResult {
   headline: string;
 }
 
-interface CategoryScore {
+export interface CategoryScore {
   name: string;
   score: number;
   maxPoints: number;
@@ -24,7 +25,7 @@ interface CategoryScore {
   checks: CheckResult[];
 }
 
-interface ScanResult {
+export interface ScanResult {
   url: string;
   domain: string;
   firmName: string;
@@ -53,7 +54,7 @@ type ViewState = 'input' | 'loading' | 'results';
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
-function getScoreClass(score: number): string {
+export function getScoreClass(score: number): string {
   if (score >= 81) return 'excellent';
   if (score >= 70) return 'good';
   if (score >= 60) return 'average';
@@ -61,19 +62,19 @@ function getScoreClass(score: number): string {
   return 'poor';
 }
 
-function getCheckStatus(check: CheckResult): string {
+export function getCheckStatus(check: CheckResult): string {
   if (check.passed) return 'pass';
   if (check.score > 0) return 'partial';
   return 'fail';
 }
 
-function getCheckStatusLabel(check: CheckResult): string {
+export function getCheckStatusLabel(check: CheckResult): string {
   if (check.passed) return 'Pass';
   if (check.score > 0) return 'Partial';
   return 'Fail';
 }
 
-function gradeColor(grade: string): string {
+export function gradeColor(grade: string): string {
   if (grade === 'A' || grade === 'A+') return 'var(--green)';
   if (grade === 'B' || grade === 'B+') return 'var(--blue)';
   if (grade === 'C' || grade === 'C+') return 'var(--orange)';
@@ -258,9 +259,19 @@ export default function Home() {
 // ═══════════════════════════════════════════════════════════
 // RESULTS COMPONENT
 // ═══════════════════════════════════════════════════════════
-function ResultsSection({ result, onReset }: { result: ScanResult; onReset: () => void }) {
+export function ResultsSection({ result, onReset, isShared }: { result: ScanResult; onReset?: () => void; isShared?: boolean }) {
   const overall = result.overallScore;
   const scoreClass = getScoreClass(overall);
+
+  const [shareMsg, setShareMsg] = useState('');
+  const handleShare = () => {
+    const encoded = encodeResults(result);
+    const shareUrl = `${window.location.origin}/share#${encoded}`;
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setShareMsg('Link Copied!');
+      setTimeout(() => setShareMsg(''), 2000);
+    });
+  };
 
   const categoryOrder: (keyof typeof result.categories)[] = [
     'blogEngine', 'contentQuality', 'topicalAuthority', 'contentDiversity'
@@ -322,6 +333,24 @@ function ResultsSection({ result, onReset }: { result: ScanResult; onReset: () =
           <div className={`score-grade-badge grade-${scoreClass}`}>{result.grade} — {result.gradeLabel}</div>
         </div>
       </div>
+
+      {/* SHARE BUTTON */}
+      {!isShared && (
+        <div className="share-btn-wrap">
+          <button className="share-btn" onClick={handleShare}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+            {shareMsg || 'Share Results'}
+          </button>
+        </div>
+      )}
+
+      {/* SHARED BANNER */}
+      {isShared && (
+        <div className="shared-banner">Shared results — <a href="/">Run your own audit</a></div>
+      )}
 
       {/* CATEGORY GRADES OVERVIEW */}
       <div className="categories-label">Category Grades</div>
@@ -424,36 +453,53 @@ function ResultsSection({ result, onReset }: { result: ScanResult; onReset: () =
       <div className="section-divider"></div>
 
       {/* CTA */}
-      <div className="cta-section">
-        <div className="cta-eyebrow">This is your preliminary score</div>
-        <div className="cta-title">Want the full<br /><em style={{ fontStyle: 'italic' }}>Content Audit</em>?</div>
-        <div className="cta-sub">
-          This scan covers what&apos;s publicly visible. The full audit includes competitor content benchmarking, keyword gap analysis, content calendar recommendations, and a prioritized editorial plan — delivered by Rankings.io within 48 hours.
+      {!isShared ? (
+        <div className="cta-section">
+          <div className="cta-eyebrow">This is your preliminary score</div>
+          <div className="cta-title">Want the full<br /><em style={{ fontStyle: 'italic' }}>Content Audit</em>?</div>
+          <div className="cta-sub">
+            This scan covers what&apos;s publicly visible. The full audit includes competitor content benchmarking, keyword gap analysis, content calendar recommendations, and a prioritized editorial plan — delivered by Rankings.io within 48 hours.
+          </div>
+          <div className="cta-buttons">
+            <a
+              href={`https://meetings.hubspot.com/sknudson?subject=${encodeURIComponent('Full Content Audit — ' + result.firmName)}`}
+              className="cta-btn-primary"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+              Get Your Full Audit
+            </a>
+            <button className="cta-btn-secondary" onClick={onReset}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
+              </svg>
+              Audit Another Firm
+            </button>
+          </div>
         </div>
-        <div className="cta-buttons">
-          <a
-            href={`https://meetings.hubspot.com/sknudson?subject=${encodeURIComponent('Full Content Audit — ' + result.firmName)}`}
-            className="cta-btn-primary"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M5 12h14M12 5l7 7-7 7" />
-            </svg>
-            Get Your Full Audit
-          </a>
-          <button className="cta-btn-secondary" onClick={onReset}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
-            </svg>
-            Audit Another Firm
-          </button>
+      ) : (
+        <div className="cta-section">
+          <div className="cta-title">See how your firm scores.</div>
+          <div className="cta-sub">Run your own Content Audit — free, instant, no login required.</div>
+          <div className="cta-buttons">
+            <a href="/" className="cta-btn-primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+              Run Your Own Audit
+            </a>
+          </div>
         </div>
-      </div>
+      )}
 
+      {!isShared && (
       <div className="score-again">
         <button className="score-again-btn" onClick={onReset}>&larr; Audit Another Firm</button>
       </div>
+      )}
     </div>
   );
 }
