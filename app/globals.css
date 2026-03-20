@@ -1160,7 +1160,10 @@ header {
 
 /* SHARE BUTTON */
 .share-btn-wrap {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin: 24px 0 48px;
 }
 .share-btn {
@@ -1202,4 +1205,25 @@ header {
 }
 .shared-banner a:hover {
   text-decoration: underline;
+}
+
+/* PDF BUTTON */
+.pdf-btn {
+  background: var(--accent, #b85c38) !important;
+  color: #fff !important;
+  border-color: var(--accent, #b85c38) !important;
+}
+.pdf-btn:hover {
+  opacity: 0.85;
+}
+
+/* PRINT STYLES */
+@media print {
+  .share-btn-wrap, .shared-banner, header, nav, footer, .back-link {
+    display: none !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
