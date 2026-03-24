@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { crawlSite, type CrawlResult } from './cloudflare-crawl';
+import { crawlSite, renderPage, type CrawlResult } from './cloudflare-crawl';
 
 // ═══════════════════════════════════════════════════════════
 // TYPES
@@ -1225,8 +1225,8 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
   const [homepageRes, crawlOutcome] = await Promise.all([
     fetchResource(url),
     Promise.race([
-      crawlSite({ url, limit: 30, maxDepth: 2, formats: ['html'], maxAge: 3600 }),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 90000)),
+      crawlSite({ url, limit: 50, maxDepth: 3, formats: ['html'], maxAge: 3600 }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 40000)),
     ]).catch((e) => {
       errors.push(`Crawl error: ${e instanceof Error ? e.message : String(e)}`);
       return null;
@@ -1294,6 +1294,8 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
     if (subUrls.length > 0) {
       const subResults = await Promise.allSettled(
         subUrls.map(async (subUrl) => {
+          const rendered = await renderPage(subUrl);
+          if (rendered.html) return parsePage(rendered.html, subUrl, domain);
           const res = await fetchResource(subUrl, 6000);
           if (res.content && res.status === 200) return parsePage(res.content, subUrl, domain);
           return null;
@@ -1323,6 +1325,8 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
     if (postUrls.length > 0) {
       const postResults = await Promise.allSettled(
         postUrls.map(async (postUrl) => {
+          const rendered = await renderPage(postUrl);
+          if (rendered.html) return parsePage(rendered.html, postUrl, domain);
           const res = await fetchResource(postUrl, 6000);
           if (res.content && res.status === 200) return parsePage(res.content, postUrl, domain);
           return null;

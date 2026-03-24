@@ -60,7 +60,7 @@ const DEFAULT_REJECT_RESOURCES = ['image', 'media', 'font', 'stylesheet'];
 
 const POLL_START_INTERVAL = 3000;   // 3s
 const POLL_MAX_INTERVAL = 10000;    // 10s
-const POLL_TIMEOUT = 55000;         // 55s — must fit within Vercel function timeout
+const POLL_TIMEOUT = 55000;         // 55s — leave room for subpage + blog fetches within 120s Vercel limit
 
 // ── In-memory cache (persists within a single serverless cold start) ─────────
 
@@ -248,6 +248,67 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult | nu
   } catch (err) {
     console.error('[cloudflare-crawl] Error:', err);
     return null; // Graceful fallback
+  }
+}
+
+// ── Single-page render (for supplement fetches) ──────────────────────────────
+
+export async function renderPage(url: string, timeoutMs = 15000): Promise<{ html: string | null; error: string | null }> {
+  const apiBase = getApiBase();
+  const token = getApiToken();
+
+  if (!apiBase || !token) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+        redirect: 'follow',
+      });
+      clearTimeout(timer);
+      if (!res.ok) return { html: null, error: `HTTP ${res.status}` };
+      const html = await res.text();
+      return { html, error: null };
+    } catch (err: any) {
+      return { html: null, error: err.message };
+    }
+  }
+
+  try {
+    const body = { url, limit: 1, depth: 0, formats: ['html'], rejectResourceTypes: DEFAULT_REJECT_RESOURCES };
+    const res = await fetch(apiBase, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { html: null, error: `Cloudflare render failed: ${res.status}` };
+    const data = await res.json();
+    const jobId = data.result;
+    if (!jobId) return { html: null, error: 'No job ID returned' };
+
+    const start = Date.now();
+    const singlePageTimeout = Math.min(timeoutMs, 20000);
+    let interval = 1500;
+    while (Date.now() - start < singlePageTimeout) {
+      await new Promise(resolve => setTimeout(resolve, interval));
+      const pollRes = await fetch(`${apiBase}/${jobId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      const result = pollData.result;
+      if (result.status && result.status !== 'running') {
+        const page = result.records?.find((r: any) => r.status === 'completed' && r.html);
+        if (page) return { html: page.html, error: null };
+        return { html: null, error: 'No HTML returned' };
+      }
+      interval = Math.min(interval * 1.3, 5000);
+    }
+    return { html: null, error: 'Render timed out' };
+  } catch (err: any) {
+    return { html: null, error: err.message };
   }
 }
 
