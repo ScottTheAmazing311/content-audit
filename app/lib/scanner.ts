@@ -188,6 +188,7 @@ function parsePage(html: string, url: string, baseDomain: string): ParsedPage {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) jsonLd.push(...parsed);
+        else if (parsed['@graph'] && Array.isArray(parsed['@graph'])) jsonLd.push(...parsed['@graph']);
         else jsonLd.push(parsed);
       }
     } catch { /* skip */ }
@@ -294,15 +295,30 @@ function parsePage(html: string, url: string, baseDomain: string): ParsedPage {
     if (metaMod) try { modifiedDate = new Date(metaMod); } catch {}
   }
 
-  // From <time> elements
+  // From <time> elements (Fix 4: parse all <time datetime=""> elements)
   if (!publishDate) {
-    const timeEl = $('time[datetime]').first().attr('datetime');
-    if (timeEl) try { publishDate = new Date(timeEl); } catch {}
+    $('time[datetime]').each((_, el) => {
+      if (publishDate) return false;
+      const dt = $(el).attr('datetime');
+      if (dt) try {
+        const parsed = new Date(dt);
+        if (!isNaN(parsed.getTime())) publishDate = parsed;
+      } catch {}
+    });
   }
 
-  // From visible date text
+  // From ISO date patterns in body text (Fix 4: detect ISO dates like 2024-03-15)
   if (!publishDate) {
-    const dateMatch = bodyText.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+202[3-6]/i);
+    const isoMatch = bodyText.match(/\b(20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b/);
+    if (isoMatch) try {
+      const parsed = new Date(isoMatch[1]);
+      if (!isNaN(parsed.getTime())) publishDate = parsed;
+    } catch {}
+  }
+
+  // From visible date text (Fix 4: expanded from 202[3-6] to 20\d{2})
+  if (!publishDate) {
+    const dateMatch = bodyText.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}/i);
     if (dateMatch) try { publishDate = new Date(dateMatch[0]); } catch {}
   }
 
@@ -658,6 +674,20 @@ function checkContentDepth(blogPosts: ParsedPage[], practicePages: ParsedPage[])
   const deepPages = wordCounts.filter(w => w >= 1000).length;
   const thinPages = wordCounts.filter(w => w < 300).length;
 
+  // Fix 7: Compute median word count
+  const sortedWordCounts = [...wordCounts].sort((a, b) => a - b);
+  const medianWords = sortedWordCounts.length % 2 === 1
+    ? sortedWordCounts[Math.floor(sortedWordCounts.length / 2)]
+    : Math.round((sortedWordCounts[sortedWordCounts.length / 2 - 1] + sortedWordCounts[sortedWordCounts.length / 2]) / 2);
+
+  // Fix 7: Thin page count and percentage
+  const thinPct = Math.round((thinPages / contentPages.length) * 100);
+
+  // Fix 7: Top 5 deepest and thinnest pages
+  const pagesWithCounts = contentPages.map(p => ({ url: p.url, wordCount: p.wordCount }));
+  const top5Deepest = [...pagesWithCounts].sort((a, b) => b.wordCount - a.wordCount).slice(0, 5);
+  const top5Thinnest = [...pagesWithCounts].sort((a, b) => a.wordCount - b.wordCount).slice(0, 5);
+
   let score = 0;
   if (avgWords >= 1500) score = 8;
   else if (avgWords >= 1000) score = 6;
@@ -668,13 +698,18 @@ function checkContentDepth(blogPosts: ParsedPage[], practicePages: ParsedPage[])
   if (thinPages > contentPages.length / 2 && score > 2) score -= 1;
 
   const passed = score >= 6;
+
+  // Fix 7: Build detailed distribution info
+  const deepestInfo = top5Deepest.map(p => `${p.url} (${p.wordCount}w)`).join(', ');
+  const thinnestInfo = top5Thinnest.map(p => `${p.url} (${p.wordCount}w)`).join(', ');
+
   return {
     name: 'Content Depth', category: 'contentQuality', passed,
     score: Math.min(score, maxPoints), maxPoints,
     detail: passed
-      ? `Content averages ${Math.round(avgWords)} words. ${deepPages} page(s) exceed 1000 words. Comprehensive content ranks higher and builds trust.`
-      : `Content averages only ${Math.round(avgWords)} words.${thinPages > 0 ? ` ${thinPages} page(s) have fewer than 300 words (thin content).` : ''} Google rewards thorough, helpful content — aim for 1000-2000 words on key pages.`,
-    headline: passed ? `${Math.round(avgWords)} avg words` : `Only ${Math.round(avgWords)} avg words`
+      ? `Content averages ${Math.round(avgWords)} words (median: ${medianWords}). ${deepPages} page(s) exceed 1000 words. ${thinPages} thin page(s) (${thinPct}% under 300w). Comprehensive content ranks higher and builds trust. Deepest: ${deepestInfo}.`
+      : `Content averages only ${Math.round(avgWords)} words (median: ${medianWords}).${thinPages > 0 ? ` ${thinPages} page(s) (${thinPct}%) have fewer than 300 words (thin content).` : ''} Google rewards thorough, helpful content — aim for 1000-2000 words on key pages. Thinnest: ${thinnestInfo}.`,
+    headline: passed ? `${Math.round(avgWords)} avg words (med ${medianWords})` : `Only ${Math.round(avgWords)} avg words (med ${medianWords})`
   };
 }
 
@@ -1311,6 +1346,38 @@ export async function scanWebsite(inputUrl: string): Promise<ScanResult> {
           }
         }
       }
+    }
+  }
+
+  // ── STEP 2b: Always ensure blog index is fetched (critical for recency check) ──
+  const blogIndexPatternCheck = /\/([a-z-]*(?:blog|news|article|insight|resource)s?)\/?$/i;
+  const hasBlogIndex = allPages.some(p => blogIndexPatternCheck.test(p.url));
+  if (!hasBlogIndex) {
+    const blogPaths = ['/blog', '/blog/', '/news', '/articles', '/insights', '/resources',
+      '/personal-injury-blog', '/injury-blog', '/legal-blog', '/law-blog',
+      '/in-the-news', '/media', '/publications', '/updates'];
+    for (const path of blogPaths) {
+      const blogUrl = origin + path;
+      const normalizedBlog = blogUrl.replace(/\/$/, '');
+      if (seenUrls.has(normalizedBlog) || seenUrls.has(blogUrl)) continue;
+      try {
+        const rendered = await renderPage(blogUrl);
+        if (rendered.html) {
+          const parsed = parsePage(rendered.html, blogUrl, domain);
+          allPages.push(parsed);
+          seenUrls.add(normalizedBlog);
+          seenUrls.add(blogUrl);
+          break; // Found a blog index, stop trying paths
+        }
+        const res = await fetchResource(blogUrl, 6000);
+        if (res.content && res.status === 200) {
+          const parsed = parsePage(res.content, blogUrl, domain);
+          allPages.push(parsed);
+          seenUrls.add(normalizedBlog);
+          seenUrls.add(blogUrl);
+          break;
+        }
+      } catch {}
     }
   }
 
